@@ -31,22 +31,50 @@ export class LMDBStoreFactory implements DataStoreFactory {
         public readonly storeNames = PersistedStores,
     ) {
         this.lmdbDir = join(rootDir, 'lmdb');
+        const versionDir = join(this.lmdbDir, Version);
 
-        const { env, config } = createEnv(this.lmdbDir);
-        this.env = env;
+        let config: RootDatabaseOptionsWithPath;
+        try {
+            const result = createEnv(this.lmdbDir);
+            this.env = result.env;
+            config = result.config;
+        } catch (e) {
+            this.log.warn(e, 'LMDB corrupted on startup, deleting and recreating');
+            rmSync(versionDir, { recursive: true, force: true });
+            const result = createEnv(this.lmdbDir);
+            this.env = result.env;
+            config = result.config;
+        }
 
         for (const store of storeNames) {
-            const database = createDB(this.env, store);
+            try {
+                const database = createDB(this.env, store);
 
-            this.stores.set(
-                store,
-                new LMDBStore(
+                this.stores.set(
                     store,
-                    database,
-                    (e) => this.handleError(e),
-                    () => this.ensureValidEnv(),
-                ),
-            );
+                    new LMDBStore(
+                        store,
+                        database,
+                        (e) => this.handleError(e),
+                        () => this.ensureValidEnv(),
+                    ),
+                );
+            } catch (e) {
+                this.log.warn(e, `Store ${store} corrupted on startup, deleting and recreating`);
+                void this.env.close();
+                rmSync(versionDir, { recursive: true, force: true });
+                this.env = createEnv(this.lmdbDir).env;
+                const database = createDB(this.env, store);
+                this.stores.set(
+                    store,
+                    new LMDBStore(
+                        store,
+                        database,
+                        (e) => this.handleError(e),
+                        () => this.ensureValidEnv(),
+                    ),
+                );
+            }
         }
 
         this.metricsInterval = setInterval(() => {
