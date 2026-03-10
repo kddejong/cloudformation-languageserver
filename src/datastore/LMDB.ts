@@ -45,14 +45,17 @@ export class LMDBStoreFactory implements DataStoreFactory {
             config = result.config;
         }
 
-        for (const store of storeNames) {
-            try {
+        try {
+            for (const store of storeNames) {
                 this.addStore(store);
-            } catch (e) {
-                this.log.warn(e, `Store ${store} corrupted on startup, deleting and recreating`);
-                void this.env.close();
-                this.deleteVersionDir();
-                this.env = createEnv(this.lmdbDir).env;
+            }
+        } catch (e) {
+            this.log.warn(e, 'Store corrupted on startup, deleting and recreating');
+            this.stores.clear();
+            void this.env.close();
+            this.deleteVersionDir();
+            this.env = createEnv(this.lmdbDir).env;
+            for (const store of storeNames) {
                 this.addStore(store);
             }
         }
