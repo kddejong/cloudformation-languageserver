@@ -22,7 +22,7 @@ import { CfnService } from '../../services/CfnService';
 import { DiagnosticCoordinator } from '../../services/DiagnosticCoordinator';
 import { S3Service } from '../../services/S3Service';
 import { LoggerFactory } from '../../telemetry/LoggerFactory';
-import { extractErrorMessage } from '../../utils/Errors';
+import { extractErrorMessage, extractStatusReason } from '../../utils/Errors';
 import { retryWithExponentialBackoff } from '../../utils/Retry';
 import { toString } from '../../utils/String';
 import { pointToPosition } from '../../utils/TypeConverters';
@@ -194,11 +194,14 @@ export async function waitForChangeSetValidation(
                 nextToken: response.NextToken,
             };
         } else {
+            const failureReason =
+                (result.reason as { StatusReason?: string } | undefined)?.StatusReason ??
+                (result.reason ? String(result.reason) : undefined);
             logger.warn(result, 'Validation failed');
             return {
                 phase: StackActionPhase.VALIDATION_FAILED,
                 state: StackActionState.FAILED,
-                failureReason: result.reason ? toString(result.reason) : undefined,
+                failureReason,
             };
         }
     } catch (error) {
@@ -206,7 +209,7 @@ export async function waitForChangeSetValidation(
         return {
             phase: StackActionPhase.VALIDATION_FAILED,
             state: StackActionState.FAILED,
-            failureReason: extractErrorMessage(error),
+            failureReason: extractStatusReason(error) ?? extractErrorMessage(error),
         };
     }
 }
@@ -246,10 +249,11 @@ export async function waitForDeployment(
         }
     } catch (error) {
         logger.error(error, 'Deployment failed with error');
+
         return {
             phase: StackActionPhase.DEPLOYMENT_FAILED,
             state: StackActionState.FAILED,
-            failureReason: extractErrorMessage(error),
+            failureReason: extractStatusReason(error) ?? extractErrorMessage(error),
         };
     }
 }
@@ -350,7 +354,22 @@ export function parseValidationEvents(events: OperationEvent[], validationName: 
         Message: [event.ValidationName, event.ValidationStatusReason].filter(Boolean).join(': '),
         Severity: event.ValidationFailureMode === HookFailureMode.FAIL ? 'ERROR' : 'INFO',
         ResourcePropertyPath: event.ValidationPath,
+        ValidationStatusReason: event.ValidationStatusReason,
     }));
+}
+
+export function formatValidationDetailsMessage(details: ValidationDetail[]): string {
+    if (!details || details.length === 0) {
+        return '';
+    }
+
+    return details
+        .map((detail) => {
+            const parts = [detail.LogicalId, detail.Message].filter(Boolean);
+            return parts.join(': ');
+        })
+        .filter(Boolean)
+        .join('\n');
 }
 
 export async function publishValidationDiagnostics(
