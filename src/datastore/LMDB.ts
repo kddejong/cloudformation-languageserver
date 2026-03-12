@@ -32,21 +32,32 @@ export class LMDBStoreFactory implements DataStoreFactory {
     ) {
         this.lmdbDir = join(rootDir, 'lmdb');
 
-        const { env, config } = createEnv(this.lmdbDir);
-        this.env = env;
+        let config: RootDatabaseOptionsWithPath;
+        try {
+            const result = createEnv(this.lmdbDir);
+            this.env = result.env;
+            config = result.config;
+        } catch (e) {
+            this.log.warn(e, 'LMDB corrupted on startup, deleting and recreating');
+            this.deleteVersionDir();
+            const result = createEnv(this.lmdbDir);
+            this.env = result.env;
+            config = result.config;
+        }
 
-        for (const store of storeNames) {
-            const database = createDB(this.env, store);
-
-            this.stores.set(
-                store,
-                new LMDBStore(
-                    store,
-                    database,
-                    (e) => this.handleError(e),
-                    () => this.ensureValidEnv(),
-                ),
-            );
+        try {
+            for (const store of storeNames) {
+                this.addStore(store);
+            }
+        } catch (e) {
+            this.log.warn(e, 'Store corrupted on startup, deleting and recreating');
+            this.stores.clear();
+            void this.env.close();
+            this.deleteVersionDir();
+            this.env = createEnv(this.lmdbDir).env;
+            for (const store of storeNames) {
+                this.addStore(store);
+            }
         }
 
         this.metricsInterval = setInterval(() => {
@@ -132,11 +143,7 @@ export class LMDBStoreFactory implements DataStoreFactory {
             this.log.info('Successfully recovered by reopening LMDB');
         } catch {
             this.log.warn('Reopen failed, deleting database');
-            try {
-                rmSync(join(this.lmdbDir, Version), { recursive: true, force: true });
-            } catch (deleteError) {
-                this.log.error(deleteError, 'Failed to delete LMDB');
-            }
+            this.deleteVersionDir();
             this.reopenEnv();
             this.recreateStores();
         }
@@ -151,21 +158,33 @@ export class LMDBStoreFactory implements DataStoreFactory {
 
     private recreateStores(): void {
         for (const name of this.storeNames) {
-            const database = this.env.openDB<unknown, string>({ name, encoding: Encoding });
             const existing = this.stores.get(name);
             if (existing) {
-                existing.updateStore(database);
+                existing.updateStore(createDB(this.env, name));
             } else {
-                this.stores.set(
-                    name,
-                    new LMDBStore(
-                        name,
-                        database,
-                        (e) => this.handleError(e),
-                        () => this.ensureValidEnv(),
-                    ),
-                );
+                this.addStore(name);
             }
+        }
+    }
+
+    private addStore(name: StoreName): void {
+        const database = createDB(this.env, name);
+        this.stores.set(
+            name,
+            new LMDBStore(
+                name,
+                database,
+                (e) => this.handleError(e),
+                () => this.ensureValidEnv(),
+            ),
+        );
+    }
+
+    private deleteVersionDir(): void {
+        try {
+            rmSync(join(this.lmdbDir, Version), { recursive: true, force: true });
+        } catch (e) {
+            this.log.error(e, 'Failed to delete LMDB version directory');
         }
     }
 
