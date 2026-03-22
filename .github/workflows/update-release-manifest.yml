@@ -1,0 +1,69 @@
+name: Update Release Manifest
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  get-configs:
+    uses: ./.github/workflows/configs.yml
+
+  update-manifest:
+    needs: [get-configs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js ${{ needs.get-configs.outputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.get-configs.outputs.node-version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install git-secrets
+        run: |
+          git clone https://github.com/awslabs/git-secrets.git /tmp/git-secrets
+          cd /tmp/git-secrets
+          sudo make install
+
+      - name: Generate release manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run generate-release-manifest
+
+      - name: Check for changes
+        run: |
+          if git diff --quiet assets/release-manifest.json; then
+            echo "::error::No changes detected in release-manifest.json. Expected updates after release."
+            exit 1
+          fi
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: 'ci: Update release manifest'
+          branch: automated/update-release-manifest
+          delete-branch: true
+          title: 'ci: Update Release Manifest'
+          body: |
+            Automated release manifest update.
+
+            This PR was created by the `update-release-manifest` workflow.
+            Please review the manifest changes and approve.
+
+            > ⚠️ This file is protected — only automated PRs from this workflow are allowed to modify `assets/release-manifest.json`.
+            > ℹ️ To trigger validation, close and reopen this PR.
+          labels: release-manifest, automated
+          add-paths: assets/release-manifest.json

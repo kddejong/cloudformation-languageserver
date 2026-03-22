@@ -1,0 +1,63 @@
+name: Rollback Release Manifest
+run-name: Rollback Release Manifest ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Get last manifest commit
+        id: previous
+        run: |
+          MANIFEST_COMMIT=$(git log -1 --format="%H" -- assets/release-manifest.json)
+          if [[ -z "$MANIFEST_COMMIT" ]]; then
+            echo "::error::No manifest commit found to revert"
+            exit 1
+          fi
+
+          MANIFEST_MESSAGE=$(git log -1 --format="%s" -- assets/release-manifest.json)
+          echo "commit=$MANIFEST_COMMIT" >> $GITHUB_OUTPUT
+          echo "message=$MANIFEST_MESSAGE" >> $GITHUB_OUTPUT
+
+      - name: Install git-secrets
+        run: |
+          git clone https://github.com/awslabs/git-secrets.git /tmp/git-secrets
+          cd /tmp/git-secrets
+          sudo make install
+
+      - name: Revert last manifest commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git revert ${{ steps.previous.outputs.commit }}
+
+      - name: Create Rollback PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automated/rollback-release-manifest
+          delete-branch: true
+          title: 'revert: Rollback release manifest to previous version'
+          body: |
+            **Emergency rollback** of `assets/release-manifest.json` to the previous version.
+
+            Reverted commit: `${{ steps.previous.outputs.commit }}`
+            > ${{ steps.previous.outputs.message }}
+
+            Triggered manually by @${{ github.actor }}.
+
+            > ℹ️ To trigger validation, close and reopen this PR.
+          labels: release-manifest, automated, rollback
+          add-paths: assets/release-manifest.json
