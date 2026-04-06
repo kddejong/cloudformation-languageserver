@@ -161,6 +161,7 @@ export class CfnLintService implements SettingsConfigurable, Closeable, Readines
         this.status = STATUS.Initializing;
 
         const startTime = performance.now();
+        this.telemetry.count('init.count', 1);
         try {
             // Initialize the worker manager
             await this.workerManager.initialize();
