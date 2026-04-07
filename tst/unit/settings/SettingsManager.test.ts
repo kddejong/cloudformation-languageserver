@@ -378,6 +378,40 @@ describe('SettingsManager', () => {
         });
     });
 
+    describe('settings readiness status', () => {
+        test('should return not ready initially', () => {
+            expect(manager.isReady()).toEqual({ ready: false });
+        });
+
+        test('should return updating during settings update', async () => {
+            const mockConfig = { hover: { enabled: false } };
+            mockWorkspace.getConfiguration.resolves(mockConfig);
+
+            let statusDuringUpdate: any = null;
+
+            // Spy on the subscription manager notify method to capture the status during update
+            const originalNotify = (manager as any).subscriptionManager.notify;
+            (manager as any).subscriptionManager.notify = vi.fn().mockImplementation((...args) => {
+                statusDuringUpdate = manager.isReady();
+                return originalNotify.apply((manager as any).subscriptionManager, args);
+            });
+
+            await manager.syncConfiguration();
+
+            expect(statusDuringUpdate).toEqual({ ready: false });
+            expect(manager.isReady()).toEqual({ ready: true });
+        });
+
+        test('should return ready after settings update completes', async () => {
+            const mockConfig = { hover: { enabled: false } };
+            mockWorkspace.getConfiguration.resolves(mockConfig);
+
+            await manager.syncConfiguration();
+
+            expect(manager.isReady()).toEqual({ ready: true });
+        });
+    });
+
     describe('initialization settings', () => {
         test('should apply init settings when workspace returns null', async () => {
             const initSettings = {

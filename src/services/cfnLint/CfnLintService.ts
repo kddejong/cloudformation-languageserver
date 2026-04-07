@@ -14,6 +14,7 @@ import { Count, Telemetry } from '../../telemetry/TelemetryDecorator';
 import { Closeable } from '../../utils/Closeable';
 import { CancellationError, Delayer } from '../../utils/Delayer';
 import { extractErrorMessage } from '../../utils/Errors';
+import { ReadinessContributor, ReadinessStatus } from '../../utils/ReadinessContributor';
 import { byteSize } from '../../utils/String';
 import { DiagnosticCoordinator } from '../DiagnosticCoordinator';
 import { WorkerNotInitializedError, MountError } from './CfnLintErrors';
@@ -44,7 +45,7 @@ export function sleep(ms: number): Promise<void> {
     });
 }
 
-export class CfnLintService implements SettingsConfigurable, Closeable {
+export class CfnLintService implements SettingsConfigurable, Closeable, ReadinessContributor {
     private static readonly CFN_LINT_SOURCE = 'cfn-lint';
 
     private status: STATUS = STATUS.Uninitialized;
@@ -126,6 +127,13 @@ export class CfnLintService implements SettingsConfigurable, Closeable {
         this.settingsSubscription = settingsManager.subscribe('diagnostics', (newDiagnosticsSettings) => {
             this.onSettingsChanged(newDiagnosticsSettings.cfnLint);
         });
+    }
+
+    isReady(): ReadinessStatus {
+        if (!this.settings.enabled) {
+            return { ready: true };
+        }
+        return { ready: this.status === STATUS.Initialized };
     }
 
     private onSettingsChanged(newSettings: CfnLintSettings): void {

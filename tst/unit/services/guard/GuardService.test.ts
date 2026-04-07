@@ -616,4 +616,43 @@ rule S3_BUCKET_ENCRYPTION {
             expect(service).toBeInstanceOf(GuardService);
         });
     });
+
+    describe('isReady', () => {
+        it('should return not ready when no rules loaded', () => {
+            const service = GuardService.create(mockComponents, mockGuardEngine, mockRuleConfiguration, mockDelayer);
+            const result = service.isReady();
+            expect(result).toEqual({ ready: false });
+        });
+
+        it('should return not ready when loading rules', () => {
+            const service = GuardService.create(mockComponents, mockGuardEngine, mockRuleConfiguration, mockDelayer);
+
+            // Set the loading state via private property access
+            (service as any).isLoadingRules = true;
+
+            const result = service.isReady();
+            expect(result).toEqual({ ready: false });
+        });
+
+        it('should return ready when service is disabled', () => {
+            const disabledSettings = {
+                ...DefaultSettings,
+                diagnostics: {
+                    ...DefaultSettings.diagnostics,
+                    cfnGuard: {
+                        ...DefaultSettings.diagnostics.cfnGuard,
+                        enabled: false,
+                    },
+                },
+            };
+            mockComponents.settingsManager.getCurrentSettings.returns(disabledSettings);
+            const service = GuardService.create(mockComponents, mockGuardEngine, mockRuleConfiguration, mockDelayer);
+
+            // Configure the service to pick up the settings
+            service.configure(mockComponents.settingsManager);
+
+            const result = service.isReady();
+            expect(result).toEqual({ ready: true });
+        });
+    });
 });

@@ -4,6 +4,7 @@ import { LspWorkspace } from '../protocol/LspWorkspace';
 import { LoggerFactory } from '../telemetry/LoggerFactory';
 import { ScopedTelemetry } from '../telemetry/ScopedTelemetry';
 import { Measure, Telemetry } from '../telemetry/TelemetryDecorator';
+import { ReadinessContributor, ReadinessStatus } from '../utils/ReadinessContributor';
 import { AwsRegion } from '../utils/Region';
 import { toString } from '../utils/String';
 import { PartialDataObserver, SubscriptionManager } from '../utils/SubscriptionManager';
@@ -14,10 +15,11 @@ import { parseSettings } from './SettingsParser';
 
 const logger = LoggerFactory.getLogger('SettingsManager');
 
-export class SettingsManager implements ISettingsSubscriber {
+export class SettingsManager implements ISettingsSubscriber, ReadinessContributor {
     @Telemetry() private readonly telemetry!: ScopedTelemetry;
     private readonly settingsState = new SettingsState();
     private readonly subscriptionManager = new SubscriptionManager<Settings>();
+    private settingsReady = false;
 
     constructor(
         private readonly workspace: LspWorkspace,
@@ -31,6 +33,10 @@ export class SettingsManager implements ISettingsSubscriber {
      */
     getCurrentSettings(): Settings {
         return this.settingsState.toSettings();
+    }
+
+    isReady(): ReadinessStatus {
+        return { ready: this.settingsReady };
     }
 
     reset() {
@@ -74,6 +80,7 @@ export class SettingsManager implements ISettingsSubscriber {
 
             const settings = parseWithPrettyError(parseSettings, mergedConfig, this.getCurrentSettings());
             this.validateAndUpdate(settings);
+            this.settingsReady = true;
         } catch (error) {
             logger.error(error, `Failed to sync configuration, keeping previous settings`);
         }
@@ -115,6 +122,8 @@ export class SettingsManager implements ISettingsSubscriber {
      */
     @Measure({ name: 'settingsUpdate', captureErrorAttributes: true })
     private validateAndUpdate(newSettings: Settings): void {
+        this.settingsReady = false;
+
         const oldSettings = this.settingsState.toSettings();
 
         newSettings.diagnostics.cfnLint.initialization.maxDelayMs = clipNumber(
@@ -158,10 +167,16 @@ export class SettingsManager implements ISettingsSubscriber {
         const hasChanged = Object.keys(difference).length > 0;
 
         if (hasChanged) {
-            this.settingsState.update(newSettings);
-            logger.info(`Settings updated: ${toString(difference)}`);
-            this.subscriptionManager.notify(newSettings, oldSettings);
+            try {
+                this.settingsState.update(newSettings);
+                logger.info(`Settings updated: ${toString(difference)}`);
+                this.subscriptionManager.notify(newSettings, oldSettings);
+            } catch (error) {
+                logger.error(error, 'Failed to update settings');
+            }
         }
+
+        this.settingsReady = true;
     }
 
     private registerSettingsGauges(): void {

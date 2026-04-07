@@ -13,6 +13,7 @@ import { Closeable } from '../../utils/Closeable';
 import { CancellationError, Delayer } from '../../utils/Delayer';
 import { extractErrorMessage } from '../../utils/Errors';
 import { readFileIfExistsAsync } from '../../utils/File';
+import { ReadinessContributor, ReadinessStatus } from '../../utils/ReadinessContributor';
 import { byteSize } from '../../utils/String';
 import { DiagnosticCoordinator } from '../DiagnosticCoordinator';
 import { getRulesForPack, getAvailableRulePacks, GuardRuleData } from './GeneratedGuardRules';
@@ -41,7 +42,7 @@ interface ValidationQueueEntry {
     reject: (error: Error) => void;
 }
 
-export class GuardService implements SettingsConfigurable, Closeable {
+export class GuardService implements SettingsConfigurable, Closeable, ReadinessContributor {
     private static readonly CFN_GUARD_SOURCE = 'cfn-guard';
 
     private settings: GuardSettings;
@@ -59,6 +60,9 @@ export class GuardService implements SettingsConfigurable, Closeable {
 
     // Cache loaded rules
     private enabledRules: GuardRule[] = [];
+
+    // Track async rule loading state
+    private isLoadingRules = false;
 
     // Validation queuing for concurrent requests
     private readonly validationQueue: ValidationQueueEntry[] = [];
@@ -91,6 +95,13 @@ export class GuardService implements SettingsConfigurable, Closeable {
             .catch((error) => {
                 this.log.error(`Failed to load initial rules: ${extractErrorMessage(error)}`);
             });
+    }
+
+    public isReady(): ReadinessStatus {
+        if (!this.settings.enabled) {
+            return { ready: true };
+        }
+        return { ready: !this.isLoadingRules && this.enabledRules.length > 0 };
     }
 
     /**
@@ -138,13 +149,18 @@ export class GuardService implements SettingsConfigurable, Closeable {
             // Clear maps only when rule configuration actually changes
             this.ruleToPacksMap.clear();
             this.ruleCustomMessages.clear();
-            // Preload rules with new settings
+
+            // Track async rule loading
+            this.isLoadingRules = true;
             this.getEnabledRulesByConfiguration()
                 .then((rules) => {
                     this.enabledRules = rules;
                 })
                 .catch((error) => {
                     this.log.error(`Failed to preload rules after settings change: ${extractErrorMessage(error)}`);
+                })
+                .finally(() => {
+                    this.isLoadingRules = false;
                 });
             this.revalidateAllDocuments();
         }
