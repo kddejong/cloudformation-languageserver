@@ -417,6 +417,8 @@ export class CfnLintService implements SettingsConfigurable, Closeable, Readines
         content: string,
     ): Promise<void> {
         const startTime = performance.now();
+        const doc = this.documentManager.get(uri);
+        const sizeCategory = doc?.getTemplateSizeCategory() ?? 'unknown';
         try {
             // Ensure folder is mounted before linting
             try {
@@ -487,6 +489,7 @@ export class CfnLintService implements SettingsConfigurable, Closeable, Readines
                 (performance.now() - startTime) / byteSize(content),
                 {
                     unit: 'ms/byte',
+                    attributes: { sizeCategory },
                 },
             );
         }
